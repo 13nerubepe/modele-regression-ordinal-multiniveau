@@ -1,7 +1,8 @@
 fastapi
 uvicorn
 joblib
-scikit-learn
-statsmodels
-pandas
 numpy
+pandas
+sqlalchemy
+statsmodels
+scikit-learn==1.5.1
