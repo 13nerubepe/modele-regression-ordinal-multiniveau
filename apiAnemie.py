@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import Consultation, get_db, init_db
 
 # =========================
-# 🚀 APP
+#  APP
 # =========================
 app = FastAPI(title="Anemia AI — API Anémie")
 
@@ -21,11 +21,13 @@ app.add_middleware(
 )
 
 # =========================
-# 📦 MODELES
+#  MODELES
 # =========================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 rf = joblib.load(os.path.join(BASE_DIR, "rf.pkl"))
+# result_robust = joblib.load(os.path.join(BASE_DIR, "result_robust.pkl"))
+
 result_robust = joblib.load(os.path.join(BASE_DIR, "result_robust.pkl"))
 
 with open(os.path.join(BASE_DIR, "colonnes_model.json")) as f:
@@ -38,14 +40,33 @@ LABELS = {
 }
 
 # =========================
-# 🗄️ INIT DB
+#  INIT DB
 # =========================
 @app.on_event("startup")
 def startup():
     init_db()
 
+
 # =========================
-# 📌 INPUT MODEL
+# DATAFRAME SAFE
+# =========================
+
+def get_dataframe(db: Session):
+    rows = db.query(Consultation).all()
+    
+    if not rows:
+        return pd.DataFrame(columns=["prediction_rf", "prediction_ord"])
+
+    df = pd.DataFrame([r.__dict__ for r in rows])
+
+    if "_sa_instance_state" in df.columns:
+        df = df.drop(columns=["_sa_instance_state"])
+
+    return df
+
+
+# =========================
+#  INPUT MODEL
 # =========================
 class PatientData(BaseModel):
     sexe_enfant: int
@@ -66,7 +87,7 @@ class PatientData(BaseModel):
     notes: str | None = None
 
 # =========================
-# 📊 PREPROCESSING
+#  PREPROCESSING
 # =========================
 def preparer_input(data: PatientData) -> pd.DataFrame:
 
@@ -89,7 +110,7 @@ def preparer_input(data: PatientData) -> pd.DataFrame:
     return df[COLONNES].astype(float)
 
 # =========================
-# 🏠 ROOT
+#  ROOT
 # =========================
 @app.get("/")
 def root():
@@ -100,7 +121,60 @@ def health():
     return {"status": "ok", "features": len(COLONNES)}
 
 # =========================
-# 🤖 PREDICTION (ML CORE)
+# STATS ANEMIE (RF + ORDINAL COMPARISON)
+# =========================
+
+@app.get("/stats/anemie")
+def stats_anemie(db: Session = Depends(get_db)):
+
+    df = get_dataframe(db)
+
+    if df.empty:
+        return {
+            "labels": ["Pas anémie", "Légère", "Modérée/Sévère"],
+            "data": [0, 0, 0],
+            "percent": [0, 0, 0],
+            "colors": ["#2e7d32", "#e65100", "#c62828"]
+        }
+
+    vc = df["prediction_rf"].value_counts().sort_index()
+    total = len(df)
+
+    return {
+        "labels": ["Pas anémie", "Légère", "Modérée/Sévère"],
+        "data": [int(vc.get(i, 0)) for i in range(3)],
+        "percent": [
+            round(vc.get(i, 0) / total * 100, 1) if total else 0
+            for i in range(3)
+        ],
+        "colors": ["#2e7d32", "#e65100", "#c62828"]
+    }
+    
+# =========================
+# DASHBOARD GLOBAL
+# =========================
+@app.get("/stats/dashboard")
+def dashboard(db: Session = Depends(get_db)):
+
+    df = get_dataframe(db)
+
+    if df.empty:
+        return {
+            "total_consultations": 0,
+            "anemie": {"0": 0, "1": 0, "2": 0}
+        }
+
+    return {
+        "total_consultations": len(df),
+        "anemie": {
+            "0": int((df["prediction_rf"] == 0).sum()),
+            "1": int((df["prediction_rf"] == 1).sum()),
+            "2": int((df["prediction_rf"] == 2).sum())
+        }
+    }
+
+# =========================
+#  PREDICTION (ML CORE)
 # =========================
 @app.post("/predict")
 def predict(data: PatientData, db: Session = Depends(get_db)):
@@ -112,12 +186,21 @@ def predict(data: PatientData, db: Session = Depends(get_db)):
     # =========================
     pred_rf = int(rf.predict(X)[0])
     proba_rf = rf.predict_proba(X)[0]
-
+    
     # =========================
     #  ORDINAL MODEL
     # =========================
     # proba_ord = result_robust.predict(X).values[0]
     # pred_ord = int(np.argmax(proba_ord))
+    
+        
+    try:
+        proba_ord = result_robust.predict_proba(X)[0]
+        pred_ord = int(np.argmax(proba_ord))
+    except:
+    
+        proba_ord = None
+        pred_ord = pred_rf      
 
     # =========================
     #  SAVE DATABASE
@@ -137,6 +220,10 @@ def predict(data: PatientData, db: Session = Depends(get_db)):
 
         prediction_rf=pred_rf,
         label_rf=LABELS[pred_rf],
+        
+        
+        prediction_ord=pred_ord,
+
 
         # prediction_ord=pred_ord,
         # label_ord=LABELS[pred_ord],
@@ -177,12 +264,17 @@ def predict(data: PatientData, db: Session = Depends(get_db)):
         #         "classe_2": round(float(proba_ord[2]), 4),
         #     }
         # },
+        
+        "ordinal": {
+            "prediction": pred_ord,
+            "label": LABELS[pred_ord] if pred_ord in LABELS else "Inconnu"
+        },
 
         "diagnostic_final": LABELS[pred_rf]
     }
 
 # =========================
-# 📱 IONIC / ANGULAR ENDPOINTS
+#  IONIC / ANGULAR ENDPOINTS
 # =========================
 
 @app.get("/consultations")
@@ -200,7 +292,7 @@ def liste_consultations(skip: int = 0, limit: int = 50, db: Session = Depends(ge
         "total": total,
         "items": items
     }
-
+    
 
 @app.get("/consultations/{id}")
 def detail_consultation(id: int, db: Session = Depends(get_db)):
@@ -211,6 +303,7 @@ def detail_consultation(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Consultation introuvable")
 
     return c
+
 
 
 @app.delete("/consultations/{id}")
