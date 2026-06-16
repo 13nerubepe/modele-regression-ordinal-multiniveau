@@ -152,6 +152,89 @@ def stats_features():
     data.sort(key=lambda x: x["pct"], reverse=True)
     return data
 
+
+# =========================
+#  Tranche dage
+# =========================
+
+@app.get("/stats/age")
+def stats_age(db: Session = Depends(get_db)):
+
+    df = get_dataframe(db)
+    if df.empty:
+        return []
+
+    df["tranche"] = pd.cut(
+        df["age_enfant_mois"],
+        bins=[0, 6, 12, 24, 36, 60],
+        labels=["0-6", "6-12", "12-24", "24-36", "36-60"]
+    )
+
+    result = df.groupby("tranche")["prediction_rf"].mean().reset_index()
+
+    return [
+        {
+            "label": r["tranche"],
+            "pct": round(r["prediction_rf"] * 100, 2)
+        }
+        for _, r in result.iterrows()
+    ]
+    
+# =========================
+#  PAR REGION
+# =========================
+    
+@app.get("/stats/anemie/region")
+def stats_anemie_region(db: Session = Depends(get_db)):
+
+    df = get_dataframe(db)
+
+    if df.empty:
+        return []
+
+    # moyenne de l'anémie par région
+    # (0,1,2 → on convertit en "niveau moyen")
+    grouped = df.groupby("region")["prediction_rf"].mean().reset_index()
+
+    return [
+        {
+            "region": int(row["region"]),
+            "pct": round(float(row["prediction_rf"] / 2 * 100), 2)  # normalisation 0–100%
+        }
+        for _, row in grouped.iterrows()
+    ]
+    
+# =========================
+#  PAR SEXE
+# =========================
+    
+@app.get("/stats/anemie-sexe")
+def stats_anemie_sexe(db: Session = Depends(get_db)):
+    df = get_dataframe(db)
+
+    if df.empty:
+        return {
+            "labels": ["Garçons", "Filles"],
+            "percent": [0, 0],
+            "colors": ["#42a5f5", "#ec407a"]
+        }
+
+    total = len(df)
+
+    # 0 = fille, 1 = garçon (adapte si besoin)
+    sexe_stats = df.groupby("sexe_enfant")["prediction_rf"].apply(
+        lambda x: (x > 0).sum() / len(x) * 100
+    )
+
+    return {
+        "labels": ["Filles", "Garçons"],
+        "percent": [
+            round(sexe_stats.get(0, 0), 1),
+            round(sexe_stats.get(1, 0), 1)
+        ],
+        "colors": ["#ec407a", "#42a5f5"]
+    }
+
 # =========================
 #  DASHBOARD
 # =========================
