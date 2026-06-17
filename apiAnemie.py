@@ -164,22 +164,31 @@ def stats_age(db: Session = Depends(get_db)):
     if df.empty:
         return []
 
-    df = df.dropna(subset=["age_enfant_mois", "prediction_rf"])  # ← sécurité ajoutée
+    # df = df.dropna(subset=["age_enfant_mois", "prediction_rf"])  # ← sécurité ajoutée
+    # df["tranche"] = pd.cut(
+    #     df["age_enfant_mois"],
+    #     bins=[0, 6, 12, 24, 36, 60],
+    #     labels=["0-6", "6-12", "12-24", "24-36", "36-60"]
+    # )
+
+    # result = df.groupby("tranche")["prediction_rf"].mean().reset_index()
+
+    # return [
+    #     {
+    #         "label": r["tranche"],
+    #         "pct": round(r["prediction_rf"] * 100, 2)
+    #     }
+    #     for _, r in result.iterrows()
+    # ]
+    
     df["tranche"] = pd.cut(
-        df["age_enfant_mois"],
-        bins=[0, 6, 12, 24, 36, 60],
-        labels=["0-6", "6-12", "12-24", "24-36", "36-60"]
-    )
+    df["age_enfant_mois"],
+    bins=[0, 6, 12, 24, 36, 60],
+    labels=["0-6", "6-12", "12-24", "24-36", "36-60"],
+    include_lowest=True
+)
 
-    result = df.groupby("tranche")["prediction_rf"].mean().reset_index()
-
-    return [
-        {
-            "label": r["tranche"],
-            "pct": round(r["prediction_rf"] * 100, 2)
-        }
-        for _, r in result.iterrows()
-    ]
+    result = df.groupby("tranche", observed=True)["prediction_rf"].mean()
     
 # =========================
 #  PAR REGION
@@ -196,14 +205,24 @@ def stats_anemie_region(db: Session = Depends(get_db)):
     # moyenne de l'anémie par région
     # (0,1,2 → on convertit en "niveau moyen")
     df = df.dropna(subset=["region", "prediction_rf"])
-    grouped = df.groupby("region")["prediction_rf"].mean().reset_index()
+    # grouped = df.groupby("region")["prediction_rf"].mean().reset_index()
+
+    # return [
+    #     {
+    #         "region": int(row["region"]),
+    #         "pct": round(float(row["prediction_rf"] / 2 * 100), 2)  # normalisation 0–100%
+    #     }
+    #     for _, row in grouped.iterrows()
+    # ]
+    
+    grouped = df.groupby("region")["prediction_rf"].mean()
 
     return [
         {
-            "region": int(row["region"]),
-            "pct": round(float(row["prediction_rf"] / 2 * 100), 2)  # normalisation 0–100%
+            "region": int(region),
+            "pct": round(value * 100, 1)
         }
-        for _, row in grouped.iterrows()
+        for region, value in grouped.items()
     ]
     
 # =========================
@@ -221,12 +240,14 @@ def stats_anemie_sexe(db: Session = Depends(get_db)):
             "colors": ["#42a5f5", "#ec407a"]
         }
 
-    total = len(df)
+    # total = len(df)
+
 
     # 0 = fille, 1 = garçon (adapte si besoin)
-    sexe_stats = df.groupby("sexe_enfant")["prediction_rf"].apply(
-        lambda x: (x > 0).sum() / len(x) * 100
-    )
+    sexe_stats = df.groupby("sexe_enfant")["prediction_rf"].mean()
+    # df.groupby("sexe_enfant")["prediction_rf"].apply(
+    #     lambda x: (x > 0).sum() / len(x) * 100
+    # )
 
     return {
         "labels": ["Filles", "Garçons"],
@@ -269,12 +290,22 @@ def predict(data: PatientData, db: Session = Depends(get_db)):
     proba_rf = rf.predict_proba(X)[0]
 
     # ── CLMM R (coefficients Python) ───────────────────
-    clmm_result = predict_clmm(data.model_dump())
-    pred_ord    = clmm_result["prediction"]
-    proba_ord   = clmm_result["probabilites"]
+    
+    try:
+        clmm_result = predict_clmm(data.model_dump())
+        pred_ord = clmm_result["prediction"]
+        proba_ord = clmm_result["probabilites"]
+    except Exception:
+        pred_ord = pred_rf
+        proba_ord = {"pas_anemie": 0, "leger": 0, "modere_severe": 0}
+        
+    # clmm_result = predict_clmm(data.model_dump())
+    # pred_ord    = clmm_result["prediction"]
+    # proba_ord   = clmm_result["probabilites"]
 
     # ── Sauvegarde BDD ─────────────────────────────────
     consultation = Consultation(
+        **data.model_dump(),
         sexe_enfant=        data.sexe_enfant,
         age_enfant_mois=    data.age_enfant_mois,
         diarrhee=           data.diarrhee,
@@ -287,6 +318,8 @@ def predict(data: PatientData, db: Session = Depends(get_db)):
         milieu_residence=   data.milieu_residence,
         region=             data.region,
         type_allaitement=   data.type_allaitement,
+        
+        
         prediction_rf=      pred_rf,
         label_rf=           LABELS[pred_rf],
         prediction_ord=     pred_ord,

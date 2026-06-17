@@ -1,1 +1,1 @@
-["age_enfant_mois", "zscore_taille_age", "zscore_poids_taille", "diarrhee", "fievre", "age_mere", "BMI", "anemie_mere_2", "anemie_mere_0", "anemie_mere_3", "milieu_residence_0", "indice_richesse_2", "indice_richesse_1", "indice_richesse_4", "indice_richesse_5", "niveau_instruction_0", "niveau_instruction_1", "niveau_instruction_2"]
+["sexe_enfant", "age_enfant_mois", "diarrhee", "fievre", "deparasitage", "age_mere", "anemie_mere", "indice_richesse", "niveau_instruction", "milieu_residence", "region", "type_allaitement"]
