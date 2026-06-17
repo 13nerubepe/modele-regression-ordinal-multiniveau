@@ -164,6 +164,7 @@ def stats_age(db: Session = Depends(get_db)):
     if df.empty:
         return []
 
+    df = df.dropna(subset=["age_enfant_mois", "prediction_rf"])  # ← sécurité ajoutée
     df["tranche"] = pd.cut(
         df["age_enfant_mois"],
         bins=[0, 6, 12, 24, 36, 60],
@@ -194,6 +195,7 @@ def stats_anemie_region(db: Session = Depends(get_db)):
 
     # moyenne de l'anémie par région
     # (0,1,2 → on convertit en "niveau moyen")
+    df = df.dropna(subset=["region", "prediction_rf"])
     grouped = df.groupby("region")["prediction_rf"].mean().reset_index()
 
     return [
