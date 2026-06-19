@@ -5,7 +5,7 @@ from datetime import datetime
 # =========================
 # DATABASE CONFIG
 # =========================
-DATABASE_URL = "sqlite:///./database.db"
+DATABASE_URL = "sqlite:///./imas_anemie.db"
 
 engine = create_engine(
     DATABASE_URL,
